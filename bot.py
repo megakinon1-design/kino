@@ -242,7 +242,7 @@ async def start_after_subs(update: Update, context: CallbackContext):
         message = update.message
     await message.reply_text(
         "🎬 Kino botiga xush kelibsiz!\n"
-        "📣 Kino kanalimiz: @mega\\_kino\\_n1\n\n"
+        "📣 Kino kanalimiz: @mega_kino_n1\n\n"
         "Film kodini raqamlarda yuboring.\n"
         "Admin: /admin"
     )
