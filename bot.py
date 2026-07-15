@@ -242,7 +242,7 @@ async def start_after_subs(update: Update, context: CallbackContext):
         message = update.message
     await message.reply_text(
         "🎬 Kino botiga xush kelibsiz!\n"
-        "📣 Kino kanalimiz: @kino_boru\n\n"
+        "📣 Kino kanalimiz: @mega\\_kino\\_n1\n\n"
         "Film kodini raqamlarda yuboring.\n"
         "Admin: /admin"
     )
@@ -610,8 +610,8 @@ async def handle_code(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ Video yuborishda xatolik yuz berdi.")
             return
         links_msg = (
-            "📱 Instagram: https://instagram.com/Bear_uzb070\n"
-            "📣 Kino kanal: @kino_boru"
+            "📱 Instagram: https://instagram.com/mega_kino_n1\n"
+            "📣 Kino kanal: @mega_kino_n1"
         )
         await update.message.reply_text(links_msg)
         await send_ad(context.bot, user_id)
