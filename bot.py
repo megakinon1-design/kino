@@ -317,8 +317,8 @@ async def start_after_subs(update: Update, context: CallbackContext):
 
     await message.reply_text(
         "🎬 Kino botiga xush kelibsiz!\n"
-        "📣 Kino kanalimiz: @kino_boru\n\n"
-        "Film kodini raqamlarda yuboring.\n"
+        "📣 Kino kanalimiz: @mega_kino_n1\n\n"
+        "Film kodini raqamlarda botga yuboring.\n"
         "Admin: /admin"
     )
     asyncio.create_task(send_ad(context.bot, user_id))
