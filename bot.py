@@ -719,8 +719,8 @@ async def handle_code(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ Video yuborishda xatolik yuz berdi.")
             return
         links_msg = (
-            "📱 Instagram: https://instagram.com/Bear_uzb070\n"
-            "📣 Kino kanal: @kino_boru"
+            "📱 Instagram: https://instagram.com/mega_kino_n1\n"
+            "📣 Kino kanal: @mega_kino_n1"
         )
         await update.message.reply_text(links_msg)
         await send_ad(context.bot, user_id)
