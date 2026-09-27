@@ -67,7 +67,6 @@ async def init_db():
             )
         ''')
 
-        # chat_id ustunini qo'shish
         try:
             await conn.execute('''
                 ALTER TABLE mandatory_subscriptions 
@@ -76,21 +75,17 @@ async def init_db():
         except Exception:
             pass
 
-        # ----- Foydalanuvchi bajargan obunalar (ENG MUHIM) -----
-        # ⚠️ Agar eski jadval bo'lsa va type xato bo'lsa, uni tashlab yangisini yaratamiz
-        try:
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS user_completed_subs (
-                    user_id BIGINT NOT NULL,
-                    sub_id INTEGER NOT NULL,
-                    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, sub_id)
-                )
-            ''')
-        except Exception as e:
-            print(f"user_completed_subs yaratishda xatolik: {e}")
+        # ----- Foydalanuvchi bajargan obunalar -----
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_completed_subs (
+                user_id BIGINT NOT NULL,
+                sub_id INTEGER NOT NULL,
+                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, sub_id)
+            )
+        ''')
 
-        # ✅ Type tekshiruvi — agar noto'g'ri bo'lsa, qayta yaratamiz
+        # ✅ Type tekshiruvi
         try:
             col_types = await conn.fetch('''
                 SELECT column_name, data_type 
