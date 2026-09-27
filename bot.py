@@ -7,10 +7,10 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.requests import Request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
-    ConversationHandler, CallbackContext, CallbackQueryHandler, TypeHandler
+    ConversationHandler, CallbackContext, TypeHandler
 )
 from dotenv import load_dotenv
 
@@ -21,9 +21,7 @@ from database import (
     get_week_users, get_active_users_last_24h,
     get_all_user_ids, create_referral, check_referral_code, get_all_referrals,
     set_ad, get_ad, remove_ad, increment_ad_count,
-    get_active_mandatory_subs, is_user_completed_sub, mark_user_completed_sub,
-    add_mandatory_subscription, remove_mandatory_subscription, list_mandatory_subscriptions,
-    set_user_completed_sub, get_user_referral_count, update_last_activity
+    get_user_referral_count
 )
 
 load_dotenv()
@@ -44,23 +42,9 @@ def safe_task(coro):
 
 
 # ======================== GLOBAL CACHE'LAR ========================
-_mandatory_cache = {"data": None, "timestamp": 0, "ttl": 60}
 _ad_cache = {"data": None, "timestamp": 0, "ttl": 120}
 _last_activity_cache = {}
 ACTIVITY_UPDATE_INTERVAL = 300
-
-
-async def get_cached_mandatory_subs():
-    now = time.time()
-    if _mandatory_cache["data"] is None or now - _mandatory_cache["timestamp"] > _mandatory_cache["ttl"]:
-        _mandatory_cache["data"] = await get_active_mandatory_subs()
-        _mandatory_cache["timestamp"] = now
-    return _mandatory_cache["data"]
-
-
-def invalidate_mandatory_cache():
-    _mandatory_cache["data"] = None
-    _mandatory_cache["timestamp"] = 0
 
 
 async def get_cached_ad():
@@ -75,16 +59,6 @@ def invalidate_ad_cache():
     _ad_cache["data"] = None
     _ad_cache["timestamp"] = 0
 
-
-# ======================== Doimiy majburiy obuna ========================
-PERMANENT_MANDATORY_SUBS = [
-    {
-        "type": "telegram",
-        "identifier": "@mpmpmpmp33",
-        "limit": 999999,
-        "chat_id": None
-    }
-]
 
 # ======================== Holatlar ========================
 WAITING_FOR_VIDEO, WAITING_FOR_CUSTOM_CODE, WAITING_FOR_DESCRIPTION = range(3)
@@ -188,259 +162,11 @@ async def send_ad(bot, chat_id):
         print(f"Reklama yuborishda xatolik: {e}")
 
 
-# ======================== Telegram a'zolik tekshiruvi ========================
-async def check_telegram_membership(bot, user_id, sub_data):
-    try:
-        chat_id = None
-        if sub_data.get("chat_id"):
-            chat_id = sub_data["chat_id"]
-        else:
-            identifier = sub_data["identifier"]
-            if identifier.startswith("@"):
-                chat_id = identifier
-            elif "t.me/" in identifier:
-                if "t.me/+" in identifier or "joinchat" in identifier:
-                    try:
-                        chat = await bot.get_chat(identifier)
-                        chat_id = chat.id
-                    except Exception as e:
-                        print(f"Zayafka linkdan chat olishda xatolik: {e}")
-                        return None
-                else:
-                    parts = identifier.split("/")
-                    if len(parts) >= 2:
-                        chat_id = "@" + parts[-1]
-            else:
-                chat_id = "@" + identifier.lstrip("@")
-        if not chat_id:
-            return None
-        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except Exception as e:
-        print(f"Membership check error: {e}")
-        return False
-
-
-# ======================== Majburiy obuna interfeysi ========================
-async def show_mandatory_subs(update: Update, context: CallbackContext):
+# ======================== Start ========================
+async def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    subs = await get_cached_mandatory_subs()
-    if not subs:
-        return True
-
-    incomplete = []
-    for sub in subs:
-        is_completed = await is_user_completed_sub(user_id, sub["id"])
-        if not is_completed:
-            incomplete.append(sub)
-
-    if not incomplete:
-        return True
-
-    text = "🔔 <b>Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:</b>\n\n"
-    url_buttons = []
-
-    for idx, sub in enumerate(incomplete, start=1):
-        sub_type = sub["type"]
-        identifier = sub["identifier"]
-        button_text = f"📢 {idx}-kanal"
-
-        if sub_type in ("telegram", "group"):
-            if identifier.startswith("@"):
-                url = f"https://t.me/{identifier[1:]}"
-            elif identifier.startswith("https://"):
-                url = identifier
-            else:
-                url = f"https://t.me/{identifier}"
-        elif sub_type == "invite":
-            url = identifier
-        elif sub_type == "bot":
-            bot_username = identifier.replace("@", "").replace("https://t.me/", "").split("?")[0].split("/")[-1]
-            url = f"https://t.me/{bot_username}?start=start"
-        elif sub_type in ("youtube", "instagram", "website"):
-            url = identifier
-        else:
-            url = identifier
-
-        url_buttons.append([InlineKeyboardButton(button_text, url=url)])
-
-    confirm_button = [[InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="confirm_all_subs")]]
-    reply_markup = InlineKeyboardMarkup(url_buttons + confirm_button)
-
-    if "mandatory_msg_id" in context.user_data:
-        try:
-            await context.bot.delete_message(chat_id=user_id, message_id=context.user_data["mandatory_msg_id"])
-        except Exception:
-            pass
-
-    if update.callback_query:
-        sent_msg = await context.bot.send_message(
-            chat_id=user_id, text=text, reply_markup=reply_markup,
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    else:
-        sent_msg = await update.message.reply_text(
-            text, reply_markup=reply_markup, parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    context.user_data["mandatory_msg_id"] = sent_msg.message_id
-    return False
-
-
-# ======================== Majburiy obuna tekshiruvi ========================
-async def check_and_handle_mandatory_subs(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    cache_key = "sub_check_cache"
-    cache_time_key = "sub_check_time"
-    current_time = time.time()
-
-    if cache_time_key in context.user_data:
-        if current_time - context.user_data[cache_time_key] < 10:
-            if context.user_data.get(cache_key, False):
-                await show_mandatory_subs(update, context)
-                return True
-            return False
-
-    subs = await get_cached_mandatory_subs()
-    if not subs:
-        context.user_data[cache_key] = False
-        context.user_data[cache_time_key] = current_time
-        return False
-
-    telegram_types = ["telegram", "group", "invite"]
-
-    async def check_sub(sub):
-        try:
-            already_completed = await is_user_completed_sub(user_id, sub["id"])
-            if sub["type"] in telegram_types:
-                result = await asyncio.wait_for(
-                    check_telegram_membership(context.bot, user_id, sub),
-                    timeout=5.0
-                )
-                if result is True:
-                    if not already_completed:
-                        await mark_user_completed_sub(user_id, sub["id"])
-                    return (sub, True)
-                elif result is False:
-                    if already_completed:
-                        await set_user_completed_sub(user_id, sub["id"], False)
-                    return (sub, False)
-                else:
-                    return (sub, already_completed)
-            else:
-                return (sub, already_completed)
-        except asyncio.TimeoutError:
-            print(f"⚠️ Obuna timeout: {sub['identifier']}")
-            return (sub, False)
-        except Exception as e:
-            print(f"check_sub xatosi: {e}")
-            return (sub, False)
-
-    results = await asyncio.gather(*[check_sub(sub) for sub in subs], return_exceptions=False)
-
-    incomplete = [sub for sub, is_ok in results if not is_ok]
-    context.user_data[cache_time_key] = current_time
-    if incomplete:
-        context.user_data[cache_key] = True
-        await show_mandatory_subs(update, context)
-        return True
-    else:
-        context.user_data[cache_key] = False
-        return False
-
-
-# ======================== Callback: obunani tasdiqlash ========================
-async def confirm_all_subs_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-
-    print(f"\n🔵 ========== CONFIRM_ALL_SUBS ==========")
-    print(f"🔵 user_id: {user_id}")
-
-    subs = await get_cached_mandatory_subs()
-    print(f"🔵 Obunalar soni: {len(subs) if subs else 0}")
-
-    if not subs:
-        await query.edit_message_text("✅ Hech qanday majburiy obuna mavjud emas.")
-        await start_after_subs(update, context)
-        return
-
-    still_incomplete = []
-    for sub in subs:
-        is_completed = await is_user_completed_sub(user_id, sub["id"])
-        print(f"🔵 sub_id={sub['id']} type={sub['type']} is_completed={is_completed}")
-        if not is_completed:
-            still_incomplete.append(sub)
-
-    print(f"🔵 still_incomplete: {len(still_incomplete)}")
-
-    if not still_incomplete:
-        context.user_data.pop("sub_check_cache", None)
-        context.user_data.pop("sub_check_time", None)
-        context.user_data.pop("mandatory_msg_id", None)
-        await query.edit_message_text("✅ Barcha kanallarga obuna bo'lgansiz!")
-        await start_after_subs(update, context)
-        return
-
-    telegram_types = ["telegram", "group", "invite"]
-
-    async def check_single_sub(sub):
-        try:
-            if sub["type"] in telegram_types:
-                result = await asyncio.wait_for(
-                    check_telegram_membership(context.bot, user_id, sub),
-                    timeout=5.0
-                )
-                print(f"🔵 telegram check: id={sub['id']} result={result}")
-                if result is None:
-                    return (sub, True)
-                return (sub, result)
-            else:
-                print(f"🔵 non-telegram (True): id={sub['id']} type={sub['type']}")
-                return (sub, True)
-        except asyncio.TimeoutError:
-            print(f"🔵 timeout: id={sub['id']}")
-            return (sub, False)
-        except Exception as e:
-            print(f"🔵 check_single_sub xatosi: {e}")
-            return (sub, False)
-
-    results = await asyncio.gather(*[check_single_sub(sub) for sub in still_incomplete])
-    print(f"🔵 results: {[(r[0]['id'], r[1]) for r in results]}")
-
-    sub_positions = {s["id"]: i for i, s in enumerate(subs, start=1)}
-    failed = [f"❌ {sub_positions.get(sub['id'], '?')}-kanal" for sub, is_ok in results if not is_ok]
-    print(f"🔵 failed: {failed}")
-
-    if failed:
-        msg_text = (
-            "Quyidagi kanallarga obuna bo'lmagansiz:\n\n" +
-            "\n".join(failed) +
-            "\n\nIltimos, avval ularga obuna bo'ling va qayta tekshiring."
-        )
-        await query.edit_message_text(msg_text, disable_web_page_preview=True)
-        return
-
-    for sub in still_incomplete:
-        print(f"🔵 mark_user_completed_sub: user={user_id} sub={sub['id']}")
-        result = await mark_user_completed_sub(user_id, sub["id"])
-        print(f"🔵 natija: {result}")
-
-    invalidate_mandatory_cache()
-
-    context.user_data.pop("sub_check_cache", None)
-    context.user_data.pop("sub_check_time", None)
-    context.user_data.pop("mandatory_msg_id", None)
-
-    await query.edit_message_text("✅ Ajoyib! Barcha kanallarga obuna bo'lgansiz. Botdan foydalanishingiz mumkin!")
-    print(f"🔵 ========== TUGADI ==========\n")
-
-    await start_after_subs(update, context)
-
-
-async def start_after_subs(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
+    referral_code = context.args[0] if context.args else None
+    await register_user_start(user_id, referral_code)
 
     await context.bot.send_message(
         chat_id=user_id,
@@ -455,24 +181,9 @@ async def start_after_subs(update: Update, context: CallbackContext):
     safe_task(send_ad(context.bot, user_id))
 
 
-# ======================== Start ========================
-async def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    referral_code = context.args[0] if context.args else None
-    await register_user_start(user_id, referral_code)
-
-    if await check_and_handle_mandatory_subs(update, context):
-        return
-
-    await start_after_subs(update, context)
-
-
 # ======================== Referal (foydalanuvchi) ========================
 async def referral(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if await check_and_handle_mandatory_subs(update, context):
-        return
-
     count = await get_user_referral_count(user_id)
     refer_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
 
@@ -502,12 +213,7 @@ async def admin(update: Update, context: CallbackContext):
         "/userref &lt;user_id&gt; - foydalanuvchi referallari\n"
         "/setad - reklama o'rnatish\n"
         "/removead - reklamani o'chirish\n"
-        "/adstats - reklama statistikasi\n\n"
-        "<b>📛 Majburiy obuna:</b>\n"
-        "/add_mandatory &lt;tur&gt; &lt;havola&gt; &lt;limit&gt; [chat_id]\n"
-        "/remove_mandatory &lt;id&gt;\n"
-        "/list_mandatory\n\n"
-        "<b>Turlar:</b> telegram, group, invite, bot, youtube, instagram, website",
+        "/adstats - reklama statistikasi",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -604,7 +310,6 @@ async def _broadcast_task(msg, progress_msg, user_ids, total):
 async def addvideo_start(update: Update, context: CallbackContext):
     if update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
-    print(f"🎬 /addvideo boshlandi (admin: {update.effective_user.id})")
     await update.message.reply_text(
         "📹 <b>Videoni yuboring</b>\n\n"
         "💡 Video yoki File sifatida yuboring.",
@@ -865,109 +570,9 @@ async def adstats(update: Update, context: CallbackContext):
         await update.message.reply_text("📭 Reklama o'rnatilmagan.")
 
 
-# ======================== Majburiy obuna admin ========================
-async def add_mandatory(update: Update, context: CallbackContext):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) < 3:
-        await update.message.reply_text(
-            "Ishlatish: /add_mandatory <type> <identifier> <limit> [chat_id]\n\n"
-            "Masalan:\n"
-            "/add_mandatory telegram @my_channel 5000\n"
-            "/add_mandatory invite https://t.me/+abc123 1000 -1001234567890\n"
-            "/add_mandatory bot @kinobot 3000\n"
-            "/add_mandatory instagram https://instagram.com/your_page 5000"
-        )
-        return
-
-    sub_type = args[0]
-    identifier = args[1]
-    try:
-        limit = int(args[2])
-        if limit <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("❌ Limit musbat butun son bo'lishi kerak.")
-        return
-
-    chat_id = None
-    if len(args) >= 4:
-        try:
-            chat_id = int(args[3])
-        except ValueError:
-            await update.message.reply_text("❌ Chat ID butun son bo'lishi kerak.")
-            return
-
-    valid_types = ["telegram", "group", "invite", "bot", "youtube", "instagram", "website"]
-    if sub_type not in valid_types:
-        await update.message.reply_text(f"❌ Tur noto'g'ri. Qabul qilinadi: {', '.join(valid_types)}")
-        return
-
-    await add_mandatory_subscription(sub_type, identifier, limit, chat_id)
-    invalidate_mandatory_cache()
-
-    msg = f"✅ Qo'shildi: {sub_type} | {identifier} | limit: {limit}"
-    if chat_id:
-        msg += f" | Chat ID: {chat_id}"
-    await update.message.reply_text(msg)
-
-
-async def remove_mandatory(update: Update, context: CallbackContext):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("Ishlatish: /remove_mandatory <id>")
-        return
-    try:
-        sub_id = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ ID butun son bo'lishi kerak.")
-        return
-
-    permanent_identifiers = [s["identifier"] for s in PERMANENT_MANDATORY_SUBS]
-    rows = await list_mandatory_subscriptions()
-    for r in rows:
-        if r["id"] == sub_id and r["identifier"] in permanent_identifiers:
-            await update.message.reply_text("⛔ Bu doimiy majburiy obuna, o'chirib bo'lmaydi!")
-            return
-
-    await remove_mandatory_subscription(sub_id)
-    invalidate_mandatory_cache()
-    await update.message.reply_text(f"✅ ID {sub_id} o'chirildi.")
-
-
-async def list_mandatory(update: Update, context: CallbackContext):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    rows = await list_mandatory_subscriptions()
-    if not rows:
-        await update.message.reply_text("Hech qanday majburiy obuna yo'q.")
-        return
-
-    text = "📋 Majburiy obunalar:\n\n"
-    for r in rows:
-        status = "✅ faol" if r["is_active"] else "❌ faol emas"
-        text += (
-            f"ID {r['id']}: {r['type']} | {r['identifier']}\n"
-            f"  Limit: {r['limit_count']} | Bajargan: {r['current_count']} | {status}"
-        )
-        if r["chat_id"]:
-            text += f" | Chat ID: {r['chat_id']}"
-        text += "\n\n"
-
-    if len(text) > 4000:
-        for i in range(0, len(text), 4000):
-            await update.message.reply_text(text[i:i+4000])
-    else:
-        await update.message.reply_text(text)
-
-
 # ======================== Kod yuborish ========================
 async def handle_code(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if await check_and_handle_mandatory_subs(update, context):
-        return
 
     text = update.message.text.strip()
     if not text.isdigit():
@@ -1030,17 +635,6 @@ async def main():
     global bot_application
     await init_db()
 
-    existing_subs = await list_mandatory_subscriptions()
-    existing_identifiers = [s["identifier"] for s in existing_subs]
-    for sub in PERMANENT_MANDATORY_SUBS:
-        if sub["identifier"] not in existing_identifiers:
-            await add_mandatory_subscription(
-                sub["type"], sub["identifier"], sub["limit"], sub["chat_id"]
-            )
-            print(f"✅ Doimiy obuna qo'shildi: {sub['identifier']}")
-        else:
-            print(f"ℹ️ Doimiy obuna allaqachon mavjud: {sub['identifier']}")
-
     bot_application = Application.builder().token(BOT_TOKEN).build()
     private_filter = filters.ChatType.PRIVATE
 
@@ -1059,10 +653,6 @@ async def main():
     bot_application.add_handler(CommandHandler("removead", removead, filters=private_filter))
     bot_application.add_handler(CommandHandler("adstats", adstats, filters=private_filter))
     bot_application.add_handler(CommandHandler("cancel", cancel, filters=private_filter))
-    bot_application.add_handler(CommandHandler("add_mandatory", add_mandatory, filters=private_filter))
-    bot_application.add_handler(CommandHandler("remove_mandatory", remove_mandatory, filters=private_filter))
-    bot_application.add_handler(CommandHandler("list_mandatory", list_mandatory, filters=private_filter))
-    bot_application.add_handler(CallbackQueryHandler(confirm_all_subs_callback, pattern="^confirm_all_subs$"))
 
     # ======================== addvideo ========================
     conv_handler = ConversationHandler(
