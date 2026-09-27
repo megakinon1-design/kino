@@ -76,6 +76,16 @@ def invalidate_ad_cache():
     _ad_cache["timestamp"] = 0
 
 
+# ======================== Doimiy majburiy obuna ========================
+PERMANENT_MANDATORY_SUBS = [
+    {
+        "type": "telegram",
+        "identifier": "@mpmpmpmp33",
+        "limit": 999999,
+        "chat_id": None
+    }
+]
+
 # ======================== Holatlar ========================
 WAITING_FOR_VIDEO, WAITING_FOR_CUSTOM_CODE, WAITING_FOR_DESCRIPTION = range(3)
 WAITING_BROADCAST = 3
@@ -257,12 +267,14 @@ async def show_mandatory_subs(update: Update, context: CallbackContext):
     confirm_button = [[InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="confirm_all_subs")]]
     reply_markup = InlineKeyboardMarkup(url_buttons + confirm_button)
 
+    # Eski xabarni o'chirish
     if "mandatory_msg_id" in context.user_data:
         try:
             await context.bot.delete_message(chat_id=user_id, message_id=context.user_data["mandatory_msg_id"])
         except Exception:
             pass
 
+    # Callback yoki message — ikkalasi uchun ishlaydi
     if update.callback_query:
         sent_msg = await context.bot.send_message(
             chat_id=user_id, text=text, reply_markup=reply_markup,
@@ -318,6 +330,7 @@ async def check_and_handle_mandatory_subs(update: Update, context: CallbackConte
                 else:
                     return (sub, already_completed)
             else:
+                # Instagram/YouTube/website — faqat "Obuna bo'ldim" bosilganda True
                 return (sub, already_completed)
         except asyncio.TimeoutError:
             print(f"⚠️ Obuna timeout: {sub['identifier']}")
@@ -412,6 +425,7 @@ async def confirm_all_subs_callback(update: Update, context: CallbackContext):
         await query.edit_message_text(msg_text, disable_web_page_preview=True)
         return
 
+    # ✅ Barcha still_incomplete ni belgilash
     for sub in still_incomplete:
         print(f"🔵 mark_user_completed_sub: user={user_id} sub={sub['id']}")
         result = await mark_user_completed_sub(user_id, sub["id"])
@@ -419,6 +433,7 @@ async def confirm_all_subs_callback(update: Update, context: CallbackContext):
 
     invalidate_mandatory_cache()
 
+    # Cache tozalash
     context.user_data.pop("sub_check_cache", None)
     context.user_data.pop("sub_check_time", None)
     context.user_data.pop("mandatory_msg_id", None)
@@ -915,6 +930,13 @@ async def remove_mandatory(update: Update, context: CallbackContext):
         await update.message.reply_text("❌ ID butun son bo'lishi kerak.")
         return
 
+    permanent_identifiers = [s["identifier"] for s in PERMANENT_MANDATORY_SUBS]
+    rows = await list_mandatory_subscriptions()
+    for r in rows:
+        if r["id"] == sub_id and r["identifier"] in permanent_identifiers:
+            await update.message.reply_text("⛔ Bu doimiy majburiy obuna, o'chirib bo'lmaydi!")
+            return
+
     await remove_mandatory_subscription(sub_id)
     invalidate_mandatory_cache()
     await update.message.reply_text(f"✅ ID {sub_id} o'chirildi.")
@@ -1013,9 +1035,16 @@ async def main():
     global bot_application
     await init_db()
 
-    # ✅ PERMANENT_MANDATORY_SUBS OLIB TASHLANDI
-    # Endi hech qanday doimiy obuna avtomatik qo'shilmaydi.
-    # Admin /add_mandatory orqali o'zi qo'shadi.
+    existing_subs = await list_mandatory_subscriptions()
+    existing_identifiers = [s["identifier"] for s in existing_subs]
+    for sub in PERMANENT_MANDATORY_SUBS:
+        if sub["identifier"] not in existing_identifiers:
+            await add_mandatory_subscription(
+                sub["type"], sub["identifier"], sub["limit"], sub["chat_id"]
+            )
+            print(f"✅ Doimiy obuna qo'shildi: {sub['identifier']}")
+        else:
+            print(f"ℹ️ Doimiy obuna allaqachon mavjud: {sub['identifier']}")
 
     bot_application = Application.builder().token(BOT_TOKEN).build()
     private_filter = filters.ChatType.PRIVATE
